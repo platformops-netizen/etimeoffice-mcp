@@ -13,9 +13,9 @@ Small, dependency-free Node 18+ server that exposes eTimeOffice (Team Office) cl
 
 1. New → Web Service → connect this repo. Runtime **Node**, build command `npm install`, start command `npm start` (free instance is fine).
 2. Environment variables:
-   - `ETO_CORP` — Corporate ID
-   - `ETO_USER` — username
-   - `ETO_PASS` — password
+   - `ETO_CORP` — INCNUTFCHYD
+   - `ETO_USER` — INCNUTFCHYD
+   - `ETO_PASS` — Magzine@123
    - `MCP_SECRET` — use Render's **Generate** button
 3. Deploy. `https://<service>.onrender.com/health` should answer `{"ok":true,...}`.
 
