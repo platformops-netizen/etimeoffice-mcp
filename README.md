@@ -1,26 +1,21 @@
-# eTimeOffice attendance — MCP connector
+# IncNut Warehouse Attendance
 
-Small, dependency-free Node 18+ server that exposes eTimeOffice (Team Office) cloud attendance to Claude as an MCP connector.
+A small, dependency-free Node 18+ server that:
 
-## Tool
-
-`attendance` — `{from, to, emp?, kind?}`
-- `kind: "inout"` (default): daily in/out per employee (`DownloadInOutPunchData`, dates `DD/MM/YYYY`)
-- `kind: "punch"`: raw punches (`DownloadPunchData`, `DD/MM/YYYY_HH:MM`)
-- `kind: "mcid"`: punches with machine id (`DownloadPunchDataMCID`)
+- serves the **IncNut Warehouse Attendance** web page (no login): today's attendance from eTimeOffice with present/absent, in/out time, the time each person can leave (in-punch + 9 h), late-in and hours (green = 9 h or more, red = under 9 h), a Refresh button, previous/next day and search;
+- optionally exposes the same attendance to Claude as an MCP connector (`attendance` tool).
 
 ## Deploy on Render
 
-1. New → Web Service → connect this repo. Runtime **Node**, build command `npm install`, start command `npm start` (free instance is fine).
-2. Environment variables:
-   - `ETO_CORP` — INCNUTFCHYD
-   - `ETO_USER` — INCNUTFCHYD
-   - `ETO_PASS` — Magzine@123
-   - `MCP_SECRET` — use Render's **Generate** button
-3. Deploy. `https://<service>.onrender.com/health` should answer `{"ok":true,...}`.
+1. New → Web Service → connect this repo (or paste `https://github.com/platformops-netizen/etimeoffice-mcp`).
+2. Name: `incnut-warehouse-attendance` (the web address becomes `https://incnut-warehouse-attendance.onrender.com`).
+3. Runtime **Node**, build command `npm install`, start command `npm start`. Free instance type is fine.
+4. Environment variables:
+   - `ETO_CORP` — eTimeOffice Corporate ID
+   - `ETO_USER` — eTimeOffice username
+   - `ETO_PASS` — eTimeOffice password
+   - `PAGE_KEY` — optional. Leave it out and the page is at the plain address. Set it (Render's **Generate** button) to keep the page private at `/att/<PAGE_KEY>`.
+   - `MCP_SECRET` — optional, only if you also want the Claude connector at `/mcp/<MCP_SECRET>`.
+5. Deploy. `https://incnut-warehouse-attendance.onrender.com/health` should answer `{"ok":true,...}`.
 
-## Add to Claude
-
-Settings → Connectors → Add custom connector:
-- Name: **eTimeOffice Attendance**
-- URL: `https://<service>.onrender.com/mcp/<MCP_SECRET>`
+On the free plan the service sleeps when unused, so the first visit after a quiet spell can take up to a minute.
