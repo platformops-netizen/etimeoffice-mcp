@@ -1,9 +1,10 @@
 // eTimeOffice (Team Office) attendance MCP connector — no dependencies, Node 18+.
-// Exposes cloud attendance to Claude as an MCP server (Streamable HTTP, stateless JSON).
+// Serves the IncNut Warehouse Attendance web page (no login) and exposes the same attendance to Claude as an MCP server.
 //
 // Env:
 //   ETO_CORP, ETO_USER, ETO_PASS   eTimeOffice login — Corporate ID, username, password (required)
-//   MCP_SECRET               long random string; the connector URL is https://<host>/mcp/<MCP_SECRET> (required)
+//   MCP_SECRET               optional: long random string; the Claude connector URL is https://<host>/mcp/<MCP_SECRET>
+//   PAGE_KEY                 optional: if set, the attendance page is at /att/<PAGE_KEY> instead of the plain address
 //   ETO_BASE                 default https://api.etimeoffice.com/api
 //   PORT                     default 8080
 //   CACHE_SECONDS            reuse an answer for this long, default 120
@@ -15,7 +16,7 @@ const CFG = {
   port: +process.env.PORT || 8080,
   cacheMs: (+process.env.CACHE_SECONDS || 120) * 1000,
 };
-const VERSION = '1.0.0';
+const VERSION = '1.1.0';
 
 // ---------- eTimeOffice (Team Office) attendance ----------
 const ETO = { corp: process.env.ETO_CORP || '', user: process.env.ETO_USER || '', pass: process.env.ETO_PASS || '', base: (process.env.ETO_BASE || 'https://api.etimeoffice.com/api').replace(/\/$/, '') };
@@ -57,6 +58,70 @@ async function callTool(name, args) {
   return v;
 }
 
+// ---------- Public attendance page (read-only weblink, no login): /att/<key> ----------
+const PAGE_KEY = (process.env.PAGE_KEY || '').trim(); // optional: when set, the page lives at /att/<PAGE_KEY> instead of /
+const pagePath = () => PAGE_KEY ? '/att/' + PAGE_KEY : '';
+const pageCache = new Map();
+async function attPage(req, res, path) {
+  const html = (code, body) => { res.writeHead(code, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'x-robots-tag': 'noindex' }); res.end(body); };
+  if (path !== pagePath()) return html(404, 'Not found');
+  const q = new URL(req.url, 'http://x').searchParams;
+  const ist = new Date(Date.now() + 330 * 60e3), todayK = ist.toISOString().slice(0, 10);
+  let day = /^\d{4}-\d{2}-\d{2}$/.test(q.get('d') || '') ? q.get('d') : todayK;
+  if (day > todayK) day = todayK;
+  const [Y, M, D] = day.split('-'), dmy = `${D}/${M}/${Y}`;
+  const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const ok = v => /\d{1,2}:\d{2}/.test(String(v || '')) && !/^0?0:00(:00)?$/.test(String(v).trim());
+  const mins = v => { const m = String(v || '').match(/(\d{1,2}):(\d{2})/); return m ? (+m[1]) * 60 + (+m[2]) : null; };
+  let rows = [], err = '', fetched = '';
+  try {
+    const c = pageCache.get(day);
+    if (c && Date.now() - c.at < 60e3 && q.get('r') !== '1') { rows = c.rows; fetched = c.fetched; }
+    else { const a = await attendance({ from: dmy, to: dmy }); rows = a.rows; fetched = a.fetched_at; pageCache.set(day, { at: Date.now(), rows, fetched }); }
+  } catch (e) { err = String(e.message || e); }
+  const R = rows.map(r => {
+    const i = String(r.INTime || '').trim(), o = String(r.OUTTime || '').trim(), st = String(r.Status || '').trim().toUpperCase();
+    const pres = ok(i) || /^(P|WOP|POW|HP|HD|P\/)/.test(st), off = !ok(i) && /^(WO|H|HO|HLD)$/.test(st);
+    let h = null; if (ok(i) && ok(o)) { let b = mins(o); const a2 = mins(i); if (b < a2) b += 1440; h = (b - a2) / 60; }
+    const late = ok(i) ? Math.max(0, mins(i) - 540) : 0;
+    return { c: String(r.Empcode || '').trim(), n: String(r.Name || '').trim(), i: ok(i) ? i.slice(0, 5) : '', o: ok(o) ? o.slice(0, 5) : '', st, cat: pres ? 'P' : off ? 'WO' : st === 'A' || !st || st === '--' ? 'A' : 'L', h, late };
+  }).sort((a, b) => ({ P: 0, L: 1, A: 2, WO: 3 }[a.cat] - { P: 0, L: 1, A: 2, WO: 3 }[b.cat]) || (a.i || '99').localeCompare(b.i || '99') || a.n.localeCompare(b.n));
+  const cnt = k => R.filter(r => r.cat === k).length, isToday = day === todayK;
+  const prev = new Date(Date.UTC(+Y, +M - 1, +D) - 864e5).toISOString().slice(0, 10), next = new Date(Date.UTC(+Y, +M - 1, +D) + 864e5).toISOString().slice(0, 10);
+  const base = pagePath() || '/', lbl = new Date(Date.UTC(+Y, +M - 1, +D)).toUTCString().slice(0, 16);
+  const cell = r => {
+    if (r.cat === 'A') return '<td class="bad">Absent</td><td></td><td></td><td></td>';
+    if (r.cat === 'WO') return '<td class="off">Week off</td><td></td><td></td><td></td>';
+    if (r.cat === 'L') return `<td class="off">${esc(r.st)}</td><td></td><td></td><td></td>`;
+    const hrs = r.h == null ? (r.i && (!isToday) ? '<td class="bad">No out-punch</td>' : '<td class="muted">In progress</td>') : `<td class="${r.h >= 9 ? 'good' : 'bad'}">${r.h.toFixed(1)} h</td>`;
+    return `<td class="good">Present</td><td>${esc(r.i) || '—'}${r.late ? `<span class="late">late ${r.late}m</span>` : ''}</td><td>${esc(r.o) || '—'}</td>${hrs}`;
+  };
+  html(200, `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex">
+<title>IncNut Warehouse Attendance · ${esc(lbl)}</title>${isToday ? '<meta http-equiv="refresh" content="300">' : ''}
+<style>:root{--bg:#f3f5f8;--card:#fff;--ink:#18212f;--mut:#5b6678;--line:#dde2ea;--g:#1f7a45;--gb:#e3f4ea;--r:#c62e2e;--rb:#fbe6e6;--o:#b26a00}
+@media (prefers-color-scheme:dark){:root{--bg:#0f141c;--card:#161d28;--ink:#e6eaf1;--mut:#9aa5b8;--line:#273142;--g:#7fd6a0;--gb:#173a26;--r:#ff7a7a;--rb:#3a1d22;--o:#f0b452}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif}
+.w{max-width:900px;margin:0 auto;padding:16px}h1{font-size:1.4rem;margin:0 0 2px}.sub{color:var(--mut);font-size:.85rem}
+.bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:14px 0}
+a.b,button{font:600 .9rem system-ui;border:1px solid var(--line);background:var(--card);color:var(--ink);padding:8px 14px;border-radius:9px;text-decoration:none;cursor:pointer}
+a.b.p{background:#2747d6;border-color:#2747d6;color:#fff}
+.k{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-bottom:14px}.k div{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 12px}.k b{display:block;font-size:1.6rem}.k span{color:var(--mut);font-size:.8rem}
+input[type=search]{font:inherit;padding:8px 10px;border:1px solid var(--line);border-radius:9px;background:var(--card);color:var(--ink);flex:1 1 180px}
+table{width:100%;border-collapse:separate;border-spacing:0 4px;font-size:.92rem}th{text-align:left;color:var(--mut);font-size:.78rem;padding:4px 8px}
+td{background:var(--card);padding:8px;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}td:first-child{border-left:1px solid var(--line);border-radius:8px 0 0 8px}td:last-child{border-right:1px solid var(--line);border-radius:0 8px 8px 0}
+td.good{background:var(--gb);color:var(--g);font-weight:600}td.bad{background:var(--rb);color:var(--r);font-weight:600}td.off,td.muted{color:var(--mut)}
+.late{display:block;color:var(--o);font-size:.75rem;font-weight:600}.c{color:var(--mut);font-size:.75rem;display:block}.err{background:var(--rb);color:var(--r);padding:10px;border-radius:9px}
+@media (max-width:560px){.k{grid-template-columns:repeat(2,minmax(0,1fr))}table{font-size:.82rem}td{padding:7px 5px}th{padding:4px 5px}}</style></head><body><div class="w">
+<h1>IncNut Warehouse Attendance</h1><div class="sub" style="margin-bottom:2px">Hyderabad warehouse</div><div class="sub">${esc(lbl)}${isToday ? ' · today' : ''} · from eTimeOffice · fetched ${esc(new Date(new Date(fetched || Date.now()).getTime() + 330 * 60e3).toISOString().slice(11, 16))} IST${isToday ? ' · refreshes every 5 minutes' : ''}</div>
+<div class="bar"><a class="b p" href="${base}?d=${day}&r=1">⟳ Refresh</a><a class="b" href="${base}?d=${prev}">← Previous day</a>${isToday ? '' : `<a class="b" href="${base}?d=${next}">Next day →</a><a class="b" href="${base}">Today</a>`}<input type="search" id="q" placeholder="Search name or code" oninput="f(this.value)"></div>
+${err ? `<div class="err">Could not load attendance: ${esc(err)}</div>` : ''}
+<div class="k"><div><b>${cnt('P')}</b><span>Present</span></div><div><b>${cnt('A')}</b><span>Absent</span></div><div><b>${R.filter(r => r.late).length}</b><span>Late in (after 09:00)</span></div><div><b>${R.filter(r => r.h != null && r.h < 9).length}</b><span>Under 9 hours</span></div></div>
+<table><thead><tr><th>Employee</th><th>Status</th><th>In</th><th>Out</th><th>Hours</th></tr></thead><tbody id="t">
+${R.map(r => `<tr data-s="${esc((r.n + ' ' + r.c).toLowerCase())}"><td><b>${esc(r.n)}</b><span class="c">${esc(r.c)}</span></td>${cell(r)}</tr>`).join('')}
+</tbody></table><p class="sub">Hours = out-punch − in-punch. Green = 9 hours or more, red = under 9 hours or missing out-punch. Late = in-punch after 09:00.</p></div>
+<script>function f(v){v=v.trim().toLowerCase();document.querySelectorAll('#t tr').forEach(function(t){t.style.display=!v||t.dataset.s.indexOf(v)>-1?'':'none';});}</script></body></html>`);
+}
+
 // ---------- JSON-RPC over Streamable HTTP (stateless) ----------
 async function handle(msg) {
   const { id, method, params } = msg || {};
@@ -87,7 +152,9 @@ async function handle(msg) {
 const server = http.createServer(async (req, res) => {
   const send = (code, body, type = 'application/json') => { res.writeHead(code, { 'content-type': type }); res.end(typeof body === 'string' ? body : JSON.stringify(body)); };
   const path = req.url.split('?')[0].replace(/\/+$/, '');
-  if (path === '' || path === '/health') return send(200, { ok: true, service: 'etimeoffice-mcp', version: VERSION });
+  if (path === '/health') return send(200, { ok: true, service: 'incnut-warehouse-attendance', version: VERSION });
+  if (req.method === 'GET' && (path === pagePath() || (!PAGE_KEY && path === ''))) return attPage(req, res, pagePath());
+  if (path === '') return send(404, { error: 'not found' });
   if (!CFG.secret || path !== '/mcp/' + CFG.secret) return send(404, { error: 'not found' });
   if (req.method === 'GET' || req.method === 'DELETE') return send(405, { error: 'stateless server: POST only' });
   if (req.method !== 'POST') return send(405, { error: 'method not allowed' });
@@ -101,7 +168,7 @@ const server = http.createServer(async (req, res) => {
 });
 
 if (require.main === module) {
-  if (!CFG.secret) { console.error('Set MCP_SECRET'); process.exit(1); }
+  if (!CFG.secret) console.warn('MCP_SECRET not set: the Claude connector endpoint is off; the attendance page still works');
   if (!ETO.corp || !ETO.user || !ETO.pass) console.warn('ETO_CORP / ETO_USER / ETO_PASS not set: attendance calls will fail until they are');
   server.listen(CFG.port, () => console.log(`etimeoffice MCP on :${CFG.port}  →  /mcp/<MCP_SECRET>`));
 }
