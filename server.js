@@ -16,7 +16,7 @@ const CFG = {
   port: +process.env.PORT || 8080,
   cacheMs: (+process.env.CACHE_SECONDS || 120) * 1000,
 };
-const VERSION = '1.1.0';
+const VERSION = '1.2.0';
 
 // ---------- eTimeOffice (Team Office) attendance ----------
 const ETO = { corp: process.env.ETO_CORP || '', user: process.env.ETO_USER || '', pass: process.env.ETO_PASS || '', base: (process.env.ETO_BASE || 'https://api.etimeoffice.com/api').replace(/\/$/, '') };
@@ -84,7 +84,8 @@ async function attPage(req, res, path) {
     const pres = ok(i) || /^(P|WOP|POW|HP|HD|P\/)/.test(st), off = !ok(i) && /^(WO|H|HO|HLD)$/.test(st);
     let h = null; if (ok(i) && ok(o)) { let b = mins(o); const a2 = mins(i); if (b < a2) b += 1440; h = (b - a2) / 60; }
     const late = ok(i) ? Math.max(0, mins(i) - 540) : 0;
-    return { c: String(r.Empcode || '').trim(), n: String(r.Name || '').trim(), i: ok(i) ? i.slice(0, 5) : '', o: ok(o) ? o.slice(0, 5) : '', st, cat: pres ? 'P' : off ? 'WO' : st === 'A' || !st || st === '--' ? 'A' : 'L', h, late };
+    const exp = ok(i) ? (() => { const t = (mins(i) + 540) % 1440; return String(Math.floor(t / 60)).padStart(2, '0') + ':' + String(t % 60).padStart(2, '0'); })() : '';
+    return { c: String(r.Empcode || '').trim(), n: String(r.Name || '').trim(), i: ok(i) ? i.slice(0, 5) : '', o: ok(o) ? o.slice(0, 5) : '', exp, st, cat: pres ? 'P' : off ? 'WO' : st === 'A' || !st || st === '--' ? 'A' : 'L', h, late };
   }).sort((a, b) => ({ P: 0, L: 1, A: 2, WO: 3 }[a.cat] - { P: 0, L: 1, A: 2, WO: 3 }[b.cat]) || (a.i || '99').localeCompare(b.i || '99') || a.n.localeCompare(b.n));
   const cnt = k => R.filter(r => r.cat === k).length, isToday = day === todayK;
   const prev = new Date(Date.UTC(+Y, +M - 1, +D) - 864e5).toISOString().slice(0, 10), next = new Date(Date.UTC(+Y, +M - 1, +D) + 864e5).toISOString().slice(0, 10);
@@ -94,7 +95,7 @@ async function attPage(req, res, path) {
     if (r.cat === 'WO') return '<td class="off">Week off</td><td></td><td></td><td></td>';
     if (r.cat === 'L') return `<td class="off">${esc(r.st)}</td><td></td><td></td><td></td>`;
     const hrs = r.h == null ? (r.i && (!isToday) ? '<td class="bad">No out-punch</td>' : '<td class="muted">In progress</td>') : `<td class="${r.h >= 9 ? 'good' : 'bad'}">${r.h.toFixed(1)} h</td>`;
-    return `<td class="good">Present</td><td>${esc(r.i) || '—'}${r.late ? `<span class="late">late ${r.late}m</span>` : ''}</td><td>${esc(r.o) || '—'}</td>${hrs}`;
+    return `<td class="good">Present</td><td>${esc(r.i) || '—'}${r.late ? `<span class="late">late ${r.late}m</span>` : ''}</td><td>${r.o ? `${esc(r.o)}${r.exp ? `<span class="c">due ${esc(r.exp)}</span>` : ''}` : (r.exp ? `<span class="due">Can leave ${esc(r.exp)}</span>` : '—')}</td>${hrs}`;
   };
   html(200, `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex">
 <title>IncNut Warehouse Attendance · ${esc(lbl)}</title>${isToday ? '<meta http-equiv="refresh" content="300">' : ''}
@@ -110,15 +111,15 @@ input[type=search]{font:inherit;padding:8px 10px;border:1px solid var(--line);bo
 table{width:100%;border-collapse:separate;border-spacing:0 4px;font-size:.92rem}th{text-align:left;color:var(--mut);font-size:.78rem;padding:4px 8px}
 td{background:var(--card);padding:8px;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}td:first-child{border-left:1px solid var(--line);border-radius:8px 0 0 8px}td:last-child{border-right:1px solid var(--line);border-radius:0 8px 8px 0}
 td.good{background:var(--gb);color:var(--g);font-weight:600}td.bad{background:var(--rb);color:var(--r);font-weight:600}td.off,td.muted{color:var(--mut)}
-.late{display:block;color:var(--o);font-size:.75rem;font-weight:600}.c{color:var(--mut);font-size:.75rem;display:block}.err{background:var(--rb);color:var(--r);padding:10px;border-radius:9px}
+.late{display:block;color:var(--o);font-size:.75rem;font-weight:600}.c{color:var(--mut);font-size:.75rem;display:block}.due{display:inline-block;background:var(--gb);color:var(--g);font-weight:700;padding:2px 8px;border-radius:6px}.err{background:var(--rb);color:var(--r);padding:10px;border-radius:9px}
 @media (max-width:560px){.k{grid-template-columns:repeat(2,minmax(0,1fr))}table{font-size:.82rem}td{padding:7px 5px}th{padding:4px 5px}}</style></head><body><div class="w">
 <h1>IncNut Warehouse Attendance</h1><div class="sub" style="margin-bottom:2px">Hyderabad warehouse</div><div class="sub">${esc(lbl)}${isToday ? ' · today' : ''} · from eTimeOffice · fetched ${esc(new Date(new Date(fetched || Date.now()).getTime() + 330 * 60e3).toISOString().slice(11, 16))} IST${isToday ? ' · refreshes every 5 minutes' : ''}</div>
 <div class="bar"><a class="b p" href="${base}?d=${day}&r=1">⟳ Refresh</a><a class="b" href="${base}?d=${prev}">← Previous day</a>${isToday ? '' : `<a class="b" href="${base}?d=${next}">Next day →</a><a class="b" href="${base}">Today</a>`}<input type="search" id="q" placeholder="Search name or code" oninput="f(this.value)"></div>
 ${err ? `<div class="err">Could not load attendance: ${esc(err)}</div>` : ''}
 <div class="k"><div><b>${cnt('P')}</b><span>Present</span></div><div><b>${cnt('A')}</b><span>Absent</span></div><div><b>${R.filter(r => r.late).length}</b><span>Late in (after 09:00)</span></div><div><b>${R.filter(r => r.h != null && r.h < 9).length}</b><span>Under 9 hours</span></div></div>
-<table><thead><tr><th>Employee</th><th>Status</th><th>In</th><th>Out</th><th>Hours</th></tr></thead><tbody id="t">
+<table><thead><tr><th>Employee</th><th>Status</th><th>In</th><th>Out / can leave</th><th>Hours</th></tr></thead><tbody id="t">
 ${R.map(r => `<tr data-s="${esc((r.n + ' ' + r.c).toLowerCase())}"><td><b>${esc(r.n)}</b><span class="c">${esc(r.c)}</span></td>${cell(r)}</tr>`).join('')}
-</tbody></table><p class="sub">Hours = out-punch − in-punch. Green = 9 hours or more, red = under 9 hours or missing out-punch. Late = in-punch after 09:00.</p></div>
+</tbody></table><p class="sub">Hours = out-punch − in-punch. Green = 9 hours or more, red = under 9 hours or missing out-punch. Late = in-punch after 09:00. Can leave = in-punch + 9 hours.</p></div>
 <script>function f(v){v=v.trim().toLowerCase();document.querySelectorAll('#t tr').forEach(function(t){t.style.display=!v||t.dataset.s.indexOf(v)>-1?'':'none';});}</script></body></html>`);
 }
 
