@@ -117,7 +117,7 @@ async function attPage(req, res, path) {
   const rosterHtml = !ros.length ? '' : `<h2 style="font-size:1.1rem;margin:26px 0 6px">Planned roster \u00b7 week offs</h2>
 <div class="bar" style="margin:6px 0 10px">${[[curM, 'This month'], [nxtM, 'Next month']].map(([k, l]) => `<a class="b${k === rm ? ' p' : ''}" href="${base}?d=${day}&rm=${k}#roster">${l} \u00b7 ${monName(k).split(' ')[0]}</a>`).join('')}</div>
 <div id="roster">${RM.length ? `<div class="rw"><table class="rt"><thead><tr><th class="st">Employee</th>${rmDays.map(x => `<th class="${x.wd === 0 ? 'su' : ''}${x.d === tdCol ? ' td' : ''}">${x.d}<small>${WDN[x.wd].slice(0, 2)}</small></th>`).join('')}</tr></thead><tbody>
-${RM.map(x => `<tr><td class="st"><b>${esc(x.n)}</b><span class="c">${esc(x.c)}${x.dep && x.dep !== 'Not mapped' ? ' \u00b7 ' + esc(x.dep) : ''}</span></td>${rmDays.map(dd => x.o.has(dd.d) ? `<td class="ro${dd.wd === 0 ? ' su' : ''}${dd.d === tdCol ? ' td' : ''}">OFF</td>` : `<td class="${dd.d === tdCol ? 'td' : ''}"></td>`).join('')}</tr>`).join('')}
+${RM.map(x => `<tr data-s="${esc((x.n + ' ' + x.c).toLowerCase())}"><td class="st"><b>${esc(x.n)}</b><span class="c">${esc(x.c)}${x.dep && x.dep !== 'Not mapped' ? ' \u00b7 ' + esc(x.dep) : ''}</span></td>${rmDays.map(dd => x.o.has(dd.d) ? `<td class="ro${dd.wd === 0 ? ' su' : ''}${dd.d === tdCol ? ' td' : ''}">OFF</td>` : `<td class="${dd.d === tdCol ? 'td' : ''}"></td>`).join('')}</tr>`).join('')}
 <tr class="tt"><td class="st">Off that day</td>${rmDays.map(dd => `<td class="${dd.d === tdCol ? 'td' : ''}">${RM.filter(x => x.o.has(dd.d)).length}</td>`).join('')}</tr>
 <tr class="tt"><td class="st">Working</td>${rmDays.map(dd => `<td class="${dd.d === tdCol ? 'td' : ''}">${RM.length - RM.filter(x => x.o.has(dd.d)).length}</td>`).join('')}</tr></tbody></table></div>` : `<p class="sub">No roster planned for ${monName(rm)} yet.</p>`}</div>`;
   const cell = r => {
@@ -151,7 +151,7 @@ ${err ? `<div class="err">Could not load attendance: ${esc(err)}</div>` : ''}
 <table><thead><tr><th>Employee</th><th>Status</th><th>In</th><th>Out / can leave</th><th>Hours</th></tr></thead><tbody id="t">
 ${R.map(r => `<tr data-s="${esc((r.n + ' ' + r.c).toLowerCase())}"><td><b>${esc(r.n)}</b><span class="c">${esc(r.c)}</span></td>${cell(r)}</tr>`).join('')}
 </tbody></table>${offTmr.length ? `<h2 style="font-size:1.05rem;margin:18px 0 6px">Week off tomorrow as per roster \u00b7 ${offTmr.length}</h2><p style="margin:0 0 8px">${offTmr.sort((a, b) => a.n.localeCompare(b.n)).map(x => `<b>${esc(x.n)}</b> <span class="c" style="display:inline">${esc(x.c)}</span>`).join(' \u00b7 ')}</p>` : ''}${rosterHtml}<p class="sub">Week off (roster) = planned off in the IncNut roster, not counted as absent. Hours = out-punch − in-punch. Green = 9 hours or more, red = under 9 hours or missing out-punch. Late = in-punch after 09:00. Can leave = in-punch + 9 hours.</p></div>
-<script>function f(v){v=v.trim().toLowerCase();document.querySelectorAll('#t tr').forEach(function(t){t.style.display=!v||t.dataset.s.indexOf(v)>-1?'':'none';});}</script></body></html>`);
+<script>function f(v){v=v.trim().toLowerCase();document.querySelectorAll('#t tr, .rt tr[data-s]').forEach(function(t){t.style.display=!v||t.dataset.s.indexOf(v)>-1?'':'none';});}</script></body></html>`);
 }
 
 // ---------- JSON-RPC over Streamable HTTP (stateless) ----------
